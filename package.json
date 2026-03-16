@@ -1,8 +1,6 @@
 {
   "name": "argy-chatbot",
   "version": "1.0.0",
-  "description": "Argy — Cybersecurity AI by Arghyadeep, powered by Google Gemini",
-  "dependencies": {
-    "@google/generative-ai": "^0.2.1"
-  }
+  "description": "Argy — Cybersecurity AI by Arghyadeep, powered by Groq",
+  "dependencies": {}
 }
