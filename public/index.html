@@ -100,6 +100,13 @@
   .chip{padding:5px 12px;background:var(--surface);border:1px solid var(--border2);border-radius:2px;font-size:11px;color:var(--text2);cursor:pointer;transition:all .18s;font-family:var(--mono);letter-spacing:.3px}
   .chip:hover{border-color:#39ff6e44;color:var(--accent);background:var(--accent-dim);box-shadow:0 0 7px var(--accent-glow)}
 
+  /* generated image */
+  .gen-img-wrap{margin-top:10px;position:relative}
+  .gen-img{width:100%;max-width:400px;border-radius:6px;border:1px solid var(--border2);display:block;opacity:0;transition:opacity .4s}
+  .gen-img.loaded{opacity:1}
+  .gen-img-loader{font-family:var(--mono);font-size:11px;color:var(--text3);padding:8px 0;animation:genpulse 1.5s infinite}
+  @keyframes genpulse{0%,100%{opacity:1}50%{opacity:.3}}
+
   /* toast */
   #toast{position:fixed;bottom:90px;left:50%;transform:translateX(-50%);background:#1a0808;border:1px solid #ff386044;color:#ff8090;font-size:11px;font-family:var(--mono);padding:8px 18px;border-radius:3px;opacity:0;transition:opacity .28s;pointer-events:none;z-index:1000;white-space:nowrap}
   #toast.show{opacity:1}
@@ -291,16 +298,30 @@ function formatContent(text) {
 }
 
 // ── Rendering ──────────────────────────────────────────
-function addMessage(role, text, imagePreviewUrl) {
+function addMessage(role, text, imagePreviewUrl, generatedImageUrl) {
   document.getElementById('welcome')?.remove();
   const div = document.createElement('div');
   div.className = `msg ${role}`;
-  const imgHtml = imagePreviewUrl
+
+  // Uploaded image preview (user side)
+  const uploadedImgHtml = imagePreviewUrl
     ? `<img class="img-preview" src="${imagePreviewUrl}" alt="uploaded"/>`
     : '';
+
+  // AI-generated image
+  const genImgHtml = generatedImageUrl
+    ? `<div class="gen-img-wrap">
+        <img class="gen-img" src="${generatedImageUrl}" alt="generated image"
+          onload="this.classList.add('loaded');this.previousElementSibling?.remove()"
+          onerror="this.style.display='none';this.nextElementSibling.style.display='block'"/>
+        <div class="gen-img-loader">generating...</div>
+        <div class="gen-img-error" style="display:none;font-size:12px;color:var(--neon-red)">image failed to load — try again</div>
+       </div>`
+    : '';
+
   div.innerHTML = `
     <div class="avatar ${role}">${role === 'ai' ? 'SYS' : 'YOU'}</div>
-    <div class="bubble">${imgHtml}${formatContent(text)}</div>
+    <div class="bubble">${uploadedImgHtml}${formatContent(text)}${genImgHtml}</div>
   `;
   msgsEl.appendChild(div);
   setTimeout(() => msgsEl.scrollTop = msgsEl.scrollHeight, 50);
@@ -404,7 +425,7 @@ async function sendMessage() {
       history.pop(); // remove failed user message from history
     } else {
       history.push({ role: 'assistant', content: data.reply });
-      addMessage('ai', data.reply);
+      addMessage('ai', data.reply, null, data.imageUrl || null);
     }
 
   } catch (err) {
