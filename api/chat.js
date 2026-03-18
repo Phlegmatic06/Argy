@@ -54,12 +54,30 @@ IMPORTANT:
 - Offensive security topics: explain educationally for CTFs, authorized pentesting, learning
 - Give real practical answers — not watered-down generic advice`;
 
-// Model selection:
-// - llama-4-scout supports vision (images + text) and is fast
-// - llama-3.3-70b is text-only but very capable
-// We auto-detect if the request contains an image and pick the right model.
 const TEXT_MODEL   = "llama-3.3-70b-versatile";
 const VISION_MODEL = "meta-llama/llama-4-scout-17b-16e-instruct";
+
+// Keywords that indicate user wants an image generated
+const IMAGE_GEN_TRIGGERS = [
+  /\b(generate|create|make|draw|paint|design|render|show me|give me)\b.{0,40}\b(image|picture|photo|illustration|art|artwork|diagram|wallpaper|logo|icon|poster)\b/i,
+  /\b(image|picture|photo|illustration|art)\b.{0,20}\b(of|showing|depicting|with)\b/i,
+  /^(draw|paint|generate|create|make|render)\b/i,
+];
+
+function isImageGenRequest(text) {
+  if (typeof text !== "string") return false;
+  return IMAGE_GEN_TRIGGERS.some(re => re.test(text));
+}
+
+function buildPollinationsUrl(prompt) {
+  // Clean and encode the prompt
+  const clean = prompt
+    .replace(/\b(generate|create|make|draw|paint|design|render|show me|give me|an image of|a picture of|a photo of)\b/gi, "")
+    .replace(/\s+/g, " ")
+    .trim();
+  const encoded = encodeURIComponent(clean);
+  return `https://image.pollinations.ai/prompt/${encoded}?width=768&height=768&nologo=true&enhance=true&seed=${Date.now()}`;
+}
 
 module.exports = async function handler(req, res) {
   if (req.method !== "POST") {
@@ -74,56 +92,59 @@ module.exports = async function handler(req, res) {
   }
 
   if (!process.env.GROQ_API_KEY) {
-    console.error("GROQ_API_KEY environment variable not set.");
+    console.error("GROQ_API_KEY not set.");
     return res.status(500).json({ error: "Server not configured. Contact the admin." });
   }
 
+  // Get the latest user message text
+  const lastMsg = messages[messages.length - 1];
+  const lastText = typeof lastMsg?.content === "string"
+    ? lastMsg.content
+    : Array.isArray(lastMsg?.content)
+      ? lastMsg.content.find(p => p.type === "text")?.text || ""
+      : "";
+
+  // ── Image generation route ──────────────────────────────
+  if (isImageGenRequest(lastText)) {
+    const imageUrl = buildPollinationsUrl(lastText);
+    return res.status(200).json({
+      reply: "generating that for you — give it a sec to load 🎨",
+      imageUrl,
+    });
+  }
+
+  // ── Normal chat route ───────────────────────────────────
   try {
     let hasImage = false;
 
-    // Convert to Groq/OpenAI format
     const converted = messages
       .filter(m => ["user", "assistant"].includes(m.role))
       .map(m => {
-        // Array content = may contain image parts
         if (Array.isArray(m.content)) {
           const parts = [];
-
           for (const part of m.content) {
             if (part.type === "text" && typeof part.text === "string" && part.text.trim()) {
               parts.push({ type: "text", text: part.text });
             }
-
             if (part.type === "image") {
-              // Get base64 data — strip data URL prefix if present
               const rawData  = part.source?.data || part.data || "";
               const mimeType = part.source?.media_type || part.mediaType || "image/jpeg";
               const base64   = rawData.includes(",") ? rawData.split(",")[1] : rawData;
-
               if (base64 && base64.length > 100) {
                 hasImage = true;
-                // Groq vision uses OpenAI-style image_url with data URI
                 parts.push({
                   type: "image_url",
-                  image_url: {
-                    url: `data:${mimeType};base64,${base64}`,
-                  },
+                  image_url: { url: `data:${mimeType};base64,${base64}` },
                 });
-              } else {
-                console.warn("Skipping image part — empty or invalid base64.");
               }
             }
           }
-
           if (parts.length === 0) return null;
           return { role: m.role, content: parts };
         }
-
-        // Plain string
         if (typeof m.content === "string" && m.content.trim()) {
           return { role: m.role, content: m.content };
         }
-
         return null;
       })
       .filter(Boolean);
@@ -132,7 +153,6 @@ module.exports = async function handler(req, res) {
       return res.status(400).json({ error: "No valid messages after processing." });
     }
 
-    // Pick model based on whether there's an image
     const model = hasImage ? VISION_MODEL : TEXT_MODEL;
 
     const groqRes = await fetch("https://api.groq.com/openai/v1/chat/completions", {
